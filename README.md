@@ -88,8 +88,11 @@ The architecture of the Asset Coverage Dashboard is largely defined by a Cloud W
 
 ### Architecture Notes
 
-- **YouTube Data API** The solution uses the YouTube Data API in order to retrieve information about some of the video assets for campaigns. It only needs to do this once per video, however it does utilize your daily YouTube quota. In the event you have a large number of video assets (e.g. more than 10,000) or are already actively using your quota, it may take a few daily runs of the Workflow to populate BigQuery with all the requisite video information.
+- **YouTube Data API** The solution uses the YouTube Data API in order to retrieve information about some of the video assets for campaigns. It only needs to do this once per video, however it does utilize your daily YouTube quota. In the event you have a large number of video assets (e.g. more than 10,000) or are already actively using your quota, it may take a few hours run of the Workflow to populate BigQuery with all the requisite video information.
 
+- **GCP Workflows** The solution uses Google Cloud Workflows. It has limitiation of maximum number of steps. If you get error: "StepCountLimitExceededError" don't worry. You should rerun it until it execute without error. On each execution of workflow it makes api calls only to missing videos.
+
+- **Scale and limitations** - Solution should handle up to 10000 active video assets without any problems.
 
 ## Updating
 

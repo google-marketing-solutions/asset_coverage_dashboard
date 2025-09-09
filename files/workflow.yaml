@@ -15,446 +15,441 @@
 main:
   params: []
   steps:
-    - init:
-        assign:
-          - account_script_path: scripts/get_account_list.sql
-          - account_script_bq_path: scripts/process_account_list.sql
-          - computed_dataset: "agency_assets"
-          - customer_id: ${sys.get_env("AGENCY_ASSETS_CID")}
-          - auth_key: ${sys.get_env("AGENCY_ASSETS_YOUTUBE_KEY")}
-          - cfg:
-              project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
-              dataset_location: ${sys.get_env("AGENCY_ASSETS_DATASET_LOCATION")}
-              location: ${sys.get_env("AGENCY_ASSETS_REGION")}
-              dataset: "agency_assets_raw"
-              gcs_bucket_prefix: ${"gs://" + sys.get_env("AGENCY_ASSETS_BUCKET") + "/"}
-              ads_config_path: google-ads.yaml
-    - get_account_list:
-        call: googleapis.run.v2.projects.locations.jobs.run
-        args:
-          name: ${"projects/" + cfg.project_id + "/locations/" + cfg.location + "/jobs/gaarf"}
-          body:
-            overrides:
-              timeout: "3600s"
-              containerOverrides:
-                args:
-                  - --ads-config
-                  - ${cfg.gcs_bucket_prefix + cfg.ads_config_path}
-                  - --customer-id
-                  - ${customer_id}
-                  - --output
-                  - bq
-                  - --bq.project
-                  - ${cfg.project_id}
-                  - --bq.dataset
-                  - ${cfg.dataset}
-                  - --bq.location
-                  - ${cfg.dataset_location}
-                  - ${cfg.gcs_bucket_prefix + account_script_path}
-    - format_account_list:
-        call: googleapis.run.v2.projects.locations.jobs.run
-        args:
-          name: ${"projects/" + cfg.project_id + "/locations/" + cfg.location + "/jobs/gaarf-bq"}
-          body:
-            overrides:
-              timeout: "3600s"
-              containerOverrides:
-                args:
-                  - --project
-                  - ${cfg.project_id}
-                  - --dataset-location
-                  - ${cfg.dataset_location}
-                  - --macro.destination_dataset
-                  - ${computed_dataset}
-                  - --macro.source_dataset
-                  - ${cfg.dataset}
-                  - ${cfg.gcs_bucket_prefix + account_script_bq_path}
-        result: gaarf_bq_execution
-    - retrieve_account_list:
-        call: googleapis.bigquery.v2.jobs.query
-        args:
+  - init:
+      assign:
+      - account_script_path: scripts/get_account_list.sql
+      - account_script_bq_path: scripts/process_account_list.sql
+      - computed_dataset: "agency_assets"
+      - customer_id: ${sys.get_env("AGENCY_ASSETS_CID")}
+      - video_ids_page_token: null
+      - cfg:
+          project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          dataset_location: ${sys.get_env("AGENCY_ASSETS_DATASET_LOCATION")}
+          location: ${sys.get_env("AGENCY_ASSETS_REGION")}
+          dataset: "agency_assets_raw"
+          gcs_bucket_prefix: ${"gs://" + sys.get_env("AGENCY_ASSETS_BUCKET") + "/"}
+          ads_config_path: google-ads.yaml
+          auth_key: ${sys.get_env("AGENCY_ASSETS_YOUTUBE_KEY")}
+  - get_account_list:
+      call: googleapis.run.v2.projects.locations.jobs.run
+      args:
+        name: ${"projects/" + cfg.project_id + "/locations/" + cfg.location + "/jobs/gaarf"}
+        body:
+          overrides:
+            timeout: "3600s"
+            containerOverrides:
+              args:
+              - --ads-config
+              - ${cfg.gcs_bucket_prefix + cfg.ads_config_path}
+              - --customer-id
+              - ${customer_id}
+              - --output
+              - bq
+              - --bq.project
+              - ${cfg.project_id}
+              - --bq.dataset
+              - ${cfg.dataset}
+              - --bq.location
+              - ${cfg.dataset_location}
+              - ${cfg.gcs_bucket_prefix + account_script_path}
+  - format_account_list:
+      call: googleapis.run.v2.projects.locations.jobs.run
+      args:
+        name: ${"projects/" + cfg.project_id + "/locations/" + cfg.location + "/jobs/gaarf-bq"}
+        body:
+          overrides:
+            timeout: "3600s"
+            containerOverrides:
+              args:
+              - --project
+              - ${cfg.project_id}
+              - --dataset-location
+              - ${cfg.dataset_location}
+              - --macro.destination_dataset
+              - ${computed_dataset}
+              - --macro.source_dataset
+              - ${cfg.dataset}
+              - ${cfg.gcs_bucket_prefix + account_script_bq_path}
+  - retrieve_account_list:
+      call: googleapis.bigquery.v2.jobs.query
+      args:
+        projectId: ${cfg.project_id}
+        body:
+          connectionProperties: []
+          defaultDataset:
+            datasetId: ${computed_dataset}
             projectId: ${cfg.project_id}
-            body:
-                connectionProperties: []
-                defaultDataset:
-                    datasetId: ${computed_dataset}
-                    projectId: ${cfg.project_id}
-                location: ${cfg.dataset_location}
-                query: "SELECT customer_id FROM account_list ORDER BY customer_id;"
-        result: account_list_result
-    - process_account_list_query:
-        assign:
-          - accounts: []
-          - account_query_raw: ${account_list_result.rows}
-    - loop_query_results:
+          location: ${cfg.dataset_location}
+          query: "SELECT customer_id FROM account_list ORDER BY customer_id;"
+      result: account_list_result
+  - process_account_list_query:
+      assign:
+      - accounts: []
+      - account_query_raw: ${account_list_result.rows}
+      - account_list_result: null
+  - loop_query_results:
+      for:
+        value: result
+        in: ${account_query_raw}
+        steps:
+        - append_to_list:
+            assign:
+            - accounts: ${list.concat(accounts, result.f[0].v)}
+  - clear_account_query_raw:
+      assign:
+      - account_query_raw: null
+  - log_accounts:
+      call: sys.log
+      args:
+        data: ${accounts}
+  - get_gaarf_data:
+      parallel:
         for:
-          value: result
-          in: ${account_query_raw}
+          value: script_to_run
+          in:
+          - "demand_gen_campaign_assets.sql"
+          - "carousel_image_assets.sql"
+          - "video_campaigns.sql"
+          - "video_assets.sql"
+          - "link_mapping.sql"
           steps:
-            - append_to_list:
-                assign:
-                  - accounts: ${list.concat(accounts, result.f[0].v)}
-    - log_accounts:
-        call: sys.log
-        args:
-          data: ${accounts}
-    - get_gaarf_data:
-        parallel:
-          branches:
-            - call_demand_gen_assets:
-                steps:
-                  - demand_gen_assets:
-                      call: run_gaarf_query
-                      args:
-                        script_name: "demand_gen_campaign_assets.sql"
-                        accounts: ${accounts}
-                        cfg: ${cfg}
-            - call_carousel_image_assets:
-                steps:
-                  - carousel_image_assets:
-                      call: run_gaarf_query
-                      args:
-                        script_name: "carousel_image_assets.sql"
-                        accounts: ${accounts}
-                        cfg: ${cfg}
-            - call_video_campaigns:
-                steps:
-                  - video_campaigns:
-                      call: run_gaarf_query
-                      args:
-                        script_name: "video_campaigns.sql"
-                        accounts: ${accounts}
-                        cfg: ${cfg}
-            - call_video_assets:
-               steps:
-                  - video_assets:
-                      call: run_gaarf_query
-                      args:
-                        script_name: "video_assets.sql"
-                        accounts: ${accounts}
-                        cfg: ${cfg}
-            - call_link_mapping:
-                steps:
-                  - link_mapping:
-                      call: run_gaarf_query
-                      args:
-                        script_name: "link_mapping.sql"
-                        accounts: ${accounts}
-                        cfg: ${cfg}
-    - create_union_views:
-        for:
-          value: table
-          in: ["demand_gen_campaign_assets", "carousel_image_assets", "link_mapping", "video_assets", "video_campaigns"]
-          steps:
-            - recreate_view:
-                call: googleapis.run.v2.projects.locations.jobs.run
-                args:
-                  name: ${"projects/" + cfg.project_id + "/locations/" + cfg.location + "/jobs/gaarf-bq"}
-                  body:
-                    overrides:
-                      containerOverrides:
-                        args:
-                          - --project
-                          - ${cfg.project_id}
-                          - --dataset-location
-                          - ${cfg.dataset_location}
-                          - --macro.dataset
-                          - ${cfg.dataset}
-                          - --macro.table
-                          - ${table}
-                          - --macro.accounts
-                          # fun hack to turn an actual array into a comma separated list
-                          - ${text.substring(json.encode_to_string(accounts), 1, -1)}
-                          - ${cfg.gcs_bucket_prefix + "scripts/postprocess/recreate_union_views.sql"}
+          - run_gaarf_in_parallel:
+              call: run_gaarf_query
+              args:
+                script_name: ${script_to_run}
+                accounts: ${accounts}
+                cfg: ${cfg}
 
-    - check_for_video_data_table:
-        try:
-          steps:
-            - get_video_data_table:
-                call: googleapis.bigquery.v2.tables.get
-                args:
-                  datasetId: ${cfg.dataset}
-                  projectId: ${cfg.project_id}
-                  tableId: video_aspect_ratios
-                result: get_table_result
-            - log_get_table_result:
-                call: sys.log
-                args:
-                  data: ${get_table_result}
-        except:
-          as: exception
-          steps:
-            - not_found:
-                switch:
-                  - condition: ${not("HttpError" in exception.tags)}
-                    raise: ${exception}
-                  - condition: ${exception.code == 404}
-                    steps:
-                      - truncate_video_data_table:
-                          call: googleapis.bigquery.v2.jobs.insert
-                          args:
+  - check_for_video_data_table:
+      try:
+        steps:
+        - get_video_data_table:
+            call: googleapis.bigquery.v2.tables.get
+            args:
+              datasetId: ${cfg.dataset}
+              projectId: ${cfg.project_id}
+              tableId: video_aspect_ratios
+            result: get_table_result
+        - clear_get_table_result:
+            assign:
+            - get_table_result: null
+      except:
+        as: exception
+        steps:
+        - not_found:
+            switch:
+            - condition: ${not("HttpError" in exception.tags)}
+              raise: ${exception}
+            - condition: ${exception.code == 404}
+              steps:
+              - truncate_video_data_table:
+                  call: googleapis.bigquery.v2.jobs.insert
+                  args:
+                    projectId: ${cfg.project_id}
+                    body:
+                      configuration:
+                        query:
+                          query: SELECT "xxxx" AS video_id, "xyz" AS embedHtml, -1 AS embedHeight, -1 AS embedWidth
+                          destinationTable:
                             projectId: ${cfg.project_id}
-                            body:
-                              configuration:
-                                query:
-                                  query: SELECT "xxxx" AS video_id, "xyz" AS embedHtml, -1 AS embedHeight, -1 AS embedWidth
-                                  destinationTable:
-                                    projectId: ${cfg.project_id}
-                                    datasetId: ${cfg.dataset}
-                                    tableId: video_aspect_ratios
-                                  create_disposition: "CREATE_IF_NEEDED"
-                                  useLegacySql: false
-                  - condition: true
-                    raise: ${exception}
-
-    - accumulate_video_ids:
-        call: googleapis.bigquery.v2.jobs.query
-        args:
-            projectId: ${cfg.project_id}
-            body:
-                connectionProperties: []
-                defaultDataset:
-                    datasetId: ${cfg.dataset}
-                    projectId: ${cfg.project_id}
-                location: ${cfg.dataset_location}
-                query: "SELECT video_id FROM video_assets WHERE video_id IS NOT NULL AND video_id NOT IN (SELECT video_id FROM video_aspect_ratios) ORDER BY video_id;"
-                useLegacySql: false
-        result: video_id_list_result
-    - process_video_id_list_query:
+                            datasetId: ${cfg.dataset}
+                            tableId: video_aspect_ratios
+                          create_disposition: "CREATE_IF_NEEDED"
+                          useLegacySql: false
+            - condition: true
+              raise: ${exception}
+  - make_active_video_ids_table:
+      call: googleapis.run.v2.projects.locations.jobs.run
+      args:
+        name: ${"projects/" + cfg.project_id + "/locations/" + cfg.location + "/jobs/gaarf-bq"}
+        body:
+          overrides:
+            containerOverrides:
+              args:
+              - --project
+              - ${cfg.project_id}
+              - --dataset-location
+              - ${cfg.dataset_location}
+              - --macro.raw_dataset
+              - ${cfg.dataset}
+              - --macro.dataset
+              - ${computed_dataset}
+              - ${cfg.gcs_bucket_prefix + "scripts/postprocess/active_video_ids.sql"}
+  - make_video_ids_query:
+      call: googleapis.bigquery.v2.jobs.insert
+      args:
+        projectId: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+        body:
+          configuration:
+            query:
+              useLegacySql: false
+              defaultDataset:
+                datasetId: ${cfg.dataset}
+                projectId: ${cfg.project_id}
+              location: ${cfg.dataset_location}
+              query: "SELECT video_id FROM active_video_ids"
+      result: video_ids_query
+  - get_page_of_video_ids_query:
+      call: googleapis.bigquery.v2.jobs.getQueryResults
+      args:
+        projectId: ${cfg.project_id}
+        jobId: ${video_ids_query.jobReference.jobId}
+        maxResults: 500
+        pageToken: ${video_ids_page_token}
+      result: video_ids_page
+  - process_video_id_list_query:
+      assign:
+      - video_id_query_raw: ${video_ids_page.rows}
+  - call_youtube_batch_process:
+      call: batch_process_youtube
+      args:
+        cfg: ${cfg}
+        video_id_query_raw: ${video_id_query_raw}
+  - loop_over_pages:
+      switch:
+      - condition: ${"pageToken" in video_ids_page and video_ids_page.pageToken != ""}
         assign:
-          - video_id_query_raw: ${video_id_list_result.rows}
-    - batch_process_youtube:
-        for:
-          value: batch
-          range: ${[0, (len(video_id_query_raw) // 500) + math.min(1, len(video_id_query_raw) % 500)]}
-          steps:
-            - init_sub_array:
-                assign:
-                  - video_id_results: []
-            - run_batch_in_parallel:
-                parallel:
-                  concurrency_limit: 100
-                  shared: [video_id_results]
-                  for:
-                    value: batch_index
-                    range: [0, 500]
-                    steps:
-                      - get_video_id:
-                          switch:
-                            - condition: ${batch * 500 + batch_index < len(video_id_query_raw)}
-                              steps:
-                                  - extract_video_id:
-                                      assign:
-                                        - video_id: ${video_id_query_raw[batch * 500 + batch_index].f[0].v}
-                                  - call_youtube_embed_api:
-                                      try:
-                                        call: http.get
-                                        args:
-                                          url: 'https://www.googleapis.com/youtube/v3/videos'
-                                          timeout: 20
-                                          headers:
-                                            "Accept": "application/json"
-                                          query:
-                                            "part": "player"
-                                            "id": ${video_id}
-                                            "maxWidth": "1920"
-                                            "maxHeight": "1920"
-                                            "key": ${auth_key}
-                                        result: x
-                                      retry:
-                                        predicate: ${custom_http_retry_predicate}
-                                        max_retries: 3
-                                        backoff:
-                                          initial_delay: 2
-                                          max_delay: 60
-                                          multiplier: 2
-                                  - record_result:
-                                      switch:
-                                        - condition: ${len(default(x.body.items, [])) > 0}
-                                          steps:
-                                              - format_result:
-                                                  assign:
-                                                    - row_result: {}
-                                                    - row_result.insertId: ${video_id + "_insert_video"}
-                                                    - row_result.json: ${x.body.items[0].player}
-                                                    - row_result.json.video_id: ${x.body.items[0].id}
-                                              - append_video_result:
-                                                  assign:
-                                                    - video_id_results: ${list.concat(video_id_results, row_result)}
-            - log_insert_data:
-                call: sys.log
-                args:
-                  data: ${video_id_results}
-            - insert_video_data:
-                switch:
-                  - condition: ${len(video_id_results) > 0}
-                    steps:
-                      - perform_insert:
-                          try:
-                            call: googleapis.bigquery.v2.tabledata.insertAll
-                            args:
-                                projectId: ${cfg.project_id}
-                                datasetId: ${cfg.dataset}
-                                tableId: video_aspect_ratios
-                                body:
-                                    rows: ${video_id_results}
-                            result: insertAllResult
-                          retry:
-                            predicate: ${custom_bqinsert_retry_predicate}
-                            max_retries: 3
-                            backoff:
-                              initial_delay: 60
-                              max_delay: 600
-                              multiplier: 2
-                      - finish_batch:
-                          call: sys.log
-                          args:
-                            data: ${insertAllResult}
-
-    - perform_bq_post_processing:
-        for:
-          value: script
-          in: ["compute_video_aspect_ratios"]
-          steps:
-            - run_bq_script:
-                call: googleapis.run.v2.projects.locations.jobs.run
-                args:
-                  name: ${"projects/" + cfg.project_id + "/locations/" + cfg.location + "/jobs/gaarf-bq"}
-                  body:
-                    overrides:
-                      containerOverrides:
-                        args:
-                          - --project
-                          - ${cfg.project_id}
-                          - --dataset-location
-                          - ${cfg.dataset_location}
-                          - --macro.source_dataset
-                          - ${cfg.dataset}
-                          - --macro.destination_dataset
-                          - ${computed_dataset}
-                          - --macro.asset_table
-                          - video_assets
-                          - --macro.aspect_table
-                          - video_aspect_ratios
-                          - ${cfg.gcs_bucket_prefix + "scripts/postprocess/" + script + ".sql"}
-    - generate_demand_gen_report:
-        call: googleapis.run.v2.projects.locations.jobs.run
-        args:
-          name: ${"projects/" + cfg.project_id + "/locations/" + cfg.location + "/jobs/gaarf-bq"}
-          body:
-            overrides:
-              containerOverrides:
-                args:
-                  - --project
-                  - ${cfg.project_id}
-                  - --dataset-location
-                  - ${cfg.dataset_location}
-                  - --macro.raw_dataset
-                  - ${cfg.dataset}
-                  - --macro.dataset
-                  - ${computed_dataset}
-                  - ${cfg.gcs_bucket_prefix + "scripts/postprocess/demand_gen_asset_coverage.sql"}
-    - generate_video_campaign_report:
-        call: googleapis.run.v2.projects.locations.jobs.run
-        args:
-          name: ${"projects/" + cfg.project_id + "/locations/" + cfg.location + "/jobs/gaarf-bq"}
-          body:
-            overrides:
-              containerOverrides:
-                args:
-                  - --project
-                  - ${cfg.project_id}
-                  - --dataset-location
-                  - ${cfg.dataset_location}
-                  - --macro.raw_dataset
-                  - ${cfg.dataset}
-                  - --macro.dataset
-                  - ${computed_dataset}
-                  - ${cfg.gcs_bucket_prefix + "scripts/postprocess/video_campaign_asset_coverage.sql"}
-    - finish:
-        return: "Yay"
+        - video_ids_page_token: ${video_ids_page.pageToken}
+        next: get_page_of_video_ids_query
+  - perform_bq_post_processing:
+      for:
+        value: script
+        in: [ "compute_video_aspect_ratios" ]
+        steps:
+        - run_bq_script:
+            call: googleapis.run.v2.projects.locations.jobs.run
+            args:
+              name: ${"projects/" + cfg.project_id + "/locations/" + cfg.location + "/jobs/gaarf-bq"}
+              body:
+                overrides:
+                  containerOverrides:
+                    args:
+                    - --project
+                    - ${cfg.project_id}
+                    - --dataset-location
+                    - ${cfg.dataset_location}
+                    - --macro.source_dataset
+                    - ${cfg.dataset}
+                    - --macro.destination_dataset
+                    - ${computed_dataset}
+                    - --macro.asset_table
+                    - video_assets
+                    - --macro.aspect_table
+                    - video_aspect_ratios
+                    - ${cfg.gcs_bucket_prefix + "scripts/postprocess/" + script + ".sql"}
+  - generate_demand_gen_report:
+      call: googleapis.run.v2.projects.locations.jobs.run
+      args:
+        name: ${"projects/" + cfg.project_id + "/locations/" + cfg.location + "/jobs/gaarf-bq"}
+        body:
+          overrides:
+            containerOverrides:
+              args:
+              - --project
+              - ${cfg.project_id}
+              - --dataset-location
+              - ${cfg.dataset_location}
+              - --macro.raw_dataset
+              - ${cfg.dataset}
+              - --macro.dataset
+              - ${computed_dataset}
+              - ${cfg.gcs_bucket_prefix + "scripts/postprocess/demand_gen_asset_coverage.sql"}
+  - generate_video_campaign_report:
+      call: googleapis.run.v2.projects.locations.jobs.run
+      args:
+        name: ${"projects/" + cfg.project_id + "/locations/" + cfg.location + "/jobs/gaarf-bq"}
+        body:
+          overrides:
+            containerOverrides:
+              args:
+              - --project
+              - ${cfg.project_id}
+              - --dataset-location
+              - ${cfg.dataset_location}
+              - --macro.raw_dataset
+              - ${cfg.dataset}
+              - --macro.dataset
+              - ${computed_dataset}
+              - ${cfg.gcs_bucket_prefix + "scripts/postprocess/video_campaign_asset_coverage.sql"}
+  - finish:
+      return: "Yay"
 
 custom_http_retry_predicate:
-  params: [e]
+  params: [ e ]
   steps:
-    - log_http_error:
-        call: sys.log
-        args:
-          data: ${e}
-          severity: "WARNING"
-    - normalize_fields:
-        assign:
-          - tags: ${default(map.get(e, "tags"), [])}
-          - code: ${default(map.get(e, "code"),0)}
-    - what_to_repeat:
-        switch:
-          # We'll repeat if it's a ConnectionError, TimeoutError or http statuses:
-          #   429 - Too Many Requests
-          #   502 - Bad Gateway
-          #   503 - Service Unavailable
-          #   504 - Gateway Timeout
-          # NOTE: sometime errors happen inside Workflow and there's no any code
-          # (i.e. "code" can be null, so DO NOT use operand ==,<,>,>=,<= without wrapping with `default`
-          - condition: ${"ConnectionFailedError" in tags or "ConnectionError" in tags or "TimeoutError" in tags or code == 429 or code == 502 or code == 503 or code == 504}
-            return: true
-    - otherwise:
-        return: false
+  - log_http_error:
+      call: sys.log
+      args:
+        data: ${e}
+        severity: "WARNING"
+  - normalize_fields:
+      assign:
+      - tags: ${default(map.get(e, "tags"), [])}
+      - code: ${default(map.get(e, "code"),0)}
+  - what_to_repeat:
+      switch:
+      # We'll repeat if it's a ConnectionError, TimeoutError or http statuses:
+      #   429 - Too Many Requests
+      #   502 - Bad Gateway
+      #   503 - Service Unavailable
+      #   504 - Gateway Timeout
+      # NOTE: sometime errors happen inside Workflow and there's no any code
+      # (i.e. "code" can be null, so DO NOT use operand ==,<,>,>=,<= without wrapping with `default`
+      - condition: ${"ConnectionFailedError" in tags or "ConnectionError" in tags or "TimeoutError" in tags or code == 429 or code == 502 or code == 503 or code == 504}
+        return: true
+  - otherwise:
+      return: false
 
 custom_bqinsert_retry_predicate:
-  params: [e]
+  params: [ e ]
   steps:
-    - log_bq_error:
-        call: sys.log
-        args:
-          data: ${e}
-          severity: "WARNING"
-    - normalize_fields:
-        assign:
-          - tags: ${default(map.get(e, "tags"), [])}
-          - code: ${default(map.get(e, "code"),0)}
-    - what_to_repeat:
-        switch:
-          # We'll repeat if it's a ConnectionError, TimeoutError or http statuses:
-          #   404 - This is specific to this BQ flow since it may come back as TRUNCATE still
-          #   429 - Too Many Requests
-          #   502 - Bad Gateway
-          #   503 - Service Unavailable
-          #   504 - Gateway Timeout
-          # NOTE: sometime errors happen inside Workflow and there's no any code
-          # (i.e. "code" can be null, so DO NOT use operand ==,<,>,>=,<= without wrapping with `default`
-          - condition: ${"ConnectionFailedError" in tags or "ConnectionError" in tags or "TimeoutError" in tags or code == 429 or code == 502 or code == 503 or code == 504}
-            return: true
-    - otherwise:
-        return: false
-
+  - log_bq_error:
+      call: sys.log
+      args:
+        data: ${e}
+        severity: "WARNING"
+  - normalize_fields:
+      assign:
+      - tags: ${default(map.get(e, "tags"), [])}
+      - code: ${default(map.get(e, "code"),0)}
+  - what_to_repeat:
+      switch:
+      # We'll repeat if it's a ConnectionError, TimeoutError or http statuses:
+      #   404 - This is specific to this BQ flow since it may come back as TRUNCATE still
+      #   429 - Too Many Requests
+      #   502 - Bad Gateway
+      #   503 - Service Unavailable
+      #   504 - Gateway Timeout
+      # NOTE: sometime errors happen inside Workflow and there's no any code
+      # (i.e. "code" can be null, so DO NOT use operand ==,<,>,>=,<= without wrapping with `default`
+      - condition: ${"ConnectionFailedError" in tags or "ConnectionError" in tags or "TimeoutError" in tags or code == 429 or code == 502 or code == 503 or code == 504}
+        return: true
+  - otherwise:
+      return: false
 
 run_gaarf_query:
-  params: [script_name, accounts, cfg] # It accepts the base name
+  params: [ script_name, accounts, cfg ] # It accepts the base name
   steps:
-    - run_the_job:
-        call: googleapis.run.v2.projects.locations.jobs.run
-        args:
-          name: ${"projects/" + cfg.project_id + "/locations/" + cfg.location + "/jobs/gaarf"}
-          body:
-            overrides:
-              timeout: "3600s"
-              containerOverrides:
-                args:
-                  - --ads-config
-                  - ${cfg.gcs_bucket_prefix + cfg.ads_config_path}
-                  - --disable-account-expansion
-                  - --customer-id
-                  - ${text.replace_all(text.substring(json.encode_to_string(accounts), 1, -1), "\"", "")}
-                  - --output
-                  - bq
-                  - --bq.project
-                  - ${cfg.project_id}
-                  - --bq.dataset
-                  - ${cfg.dataset}
-                  - --bq.location
-                  - ${cfg.dataset_location}
-                  - ${cfg.gcs_bucket_prefix + "scripts/ads/" + script_name}
-                  - --bg.no-union-view 1
-        result: job_result
-    - return_job_result:
-        return: ${job_result}
+  - run_the_job:
+      call: googleapis.run.v2.projects.locations.jobs.run
+      args:
+        name: ${"projects/" + cfg.project_id + "/locations/" + cfg.location + "/jobs/gaarf"}
+        body:
+          overrides:
+            timeout: "3600s"
+            containerOverrides:
+              args:
+              - --ads-config
+              - ${cfg.gcs_bucket_prefix + cfg.ads_config_path}
+              - --disable-account-expansion
+              - --customer-id
+              - ${text.replace_all(text.substring(json.encode_to_string(accounts), 1, -1), "\"", "")}
+              - --output
+              - bq
+              - --bq.project
+              - ${cfg.project_id}
+              - --bq.dataset
+              - ${cfg.dataset}
+              - --bq.location
+              - ${cfg.dataset_location}
+              - ${cfg.gcs_bucket_prefix + "scripts/ads/" + script_name}
+              - --bg.no-union-view 1
+      result: job_result
+  - return_job_result:
+      return: ${job_result}
+
+batch_process_youtube:
+  params: [ cfg, video_id_query_raw ]
+  steps:
+  - init_sub_array:
+      assign:
+      - video_id_results: []
+  - run_batch_in_parallel:
+      parallel:
+        concurrency_limit: 10
+        shared: [ video_id_results ]
+        for:
+          value: batch_index
+          # make 10 concurrent request with 50 items
+          # there is memory limitation and values over 500 items fails with memory limit
+          range: [ 0, 10 ]
+          steps:
+          - get_video_id:
+              switch:
+              - condition: ${batch_index*50 < len(video_id_query_raw)}
+                steps:
+                - set_video_ids:
+                    assign:
+                    - video_ids: ""
+                - aggregate_video_ids:
+                    for:
+                      range: ${[batch_index*50, math.min(len(video_id_query_raw), (batch_index + 1) * 50) -1]}
+                      value: video_idx
+                      steps:
+                      - assign_video_ids:
+                          assign:
+                          - video_ids: ${video_ids + "," + video_id_query_raw[video_idx].f[0].v}
+                - clean_up_video_ids:
+                    assign:
+                    - video_ids: ${text.substring(video_ids, 1, len(video_ids))}
+                - call_youtube_embed_api:
+                    try:
+                      call: http.get
+                      args:
+                        url: 'https://www.googleapis.com/youtube/v3/videos'
+                        timeout: 20
+                        headers:
+                          "Accept": "application/json"
+                        query:
+                          "part": "player"
+                          "id": ${video_ids} #max 50 ids
+                          "maxWidth": "1920"
+                          "maxHeight": "1920"
+                          "key": ${cfg.auth_key}
+                      result: x
+                    retry:
+                      predicate: ${custom_http_retry_predicate}
+                      max_retries: 3
+                      backoff:
+                        initial_delay: 2
+                        max_delay: 60
+                        multiplier: 2
+                - record_result:
+                    for:
+                      value: response_idx
+                      range: ${[0, len(default(x.body.items, [])) - 1]}
+                      steps:
+                      - format_result:
+                          assign:
+                          - row_result: {}
+                          - row_result.insertId: ${x.body.items[response_idx].id + "_insert_video"}
+                          - row_result.json: ${x.body.items[response_idx].player}
+                          - row_result.json.video_id: ${x.body.items[response_idx].id}
+                      - append_video_results:
+                          assign:
+                          - video_id_results: ${list.concat(video_id_results, row_result)}
+  - insert_video_data:
+      switch:
+      - condition: ${len(video_id_results) > 0}
+        steps:
+        - perform_insert:
+            try:
+              call: googleapis.bigquery.v2.tabledata.insertAll
+              args:
+                projectId: ${cfg.project_id}
+                datasetId: ${cfg.dataset}
+                tableId: video_aspect_ratios
+                body:
+                  rows: ${video_id_results}
+              result: insertAllResult
+            retry:
+              predicate: ${custom_bqinsert_retry_predicate}
+              max_retries: 3
+              backoff:
+                initial_delay: 60
+                max_delay: 600
+                multiplier: 2
+        - finish_batch:
+            call: sys.log
+            args:
+              data: ${insertAllResult}
