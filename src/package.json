@@ -1,5 +1,5 @@
 {
   "dependencies": {
-    "google-ads-api-report-fetcher": "^3.2.0"
+    "google-ads-api-report-fetcher": "^3.6.0"
   }
 }
